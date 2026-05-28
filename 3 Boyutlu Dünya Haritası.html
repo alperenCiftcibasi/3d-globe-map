@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>3 Boyutlu Dünya Haritası</title>
+<!-- ext-resource-dependency: three.js, OrbitControls, planet textures (jsDelivr) -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#eaf2ff;
+    --muted:#8ea2c4;
+    --line:rgba(150,180,230,0.14);
+    --panel:rgba(11,18,34,0.62);
+    --accent:#5fb8ff;
+    --accent-warm:#ffcf8a;
+  }
+  *{ margin:0; padding:0; box-sizing:border-box; }
+  html,body{ height:100%; }
+  body{
+    background:#03060f;
+    color:var(--ink);
+    font-family:"Space Grotesk", system-ui, sans-serif;
+    overflow:hidden;
+    -webkit-font-smoothing:antialiased;
+  }
+  #scene{ position:fixed; inset:0; display:block; cursor:grab; }
+  #scene.grabbing{ cursor:grabbing; }
+
+  /* ---- HUD ---- */
+  .hud{ position:fixed; z-index:5; pointer-events:none; }
+  .hud .pe{ pointer-events:auto; }
+
+  .topbar{ top:0; left:0; right:0; padding:30px 36px; display:flex; justify-content:space-between; align-items:flex-start; }
+  .brand{ line-height:1; }
+  .brand .kicker{
+    font-family:"IBM Plex Mono", monospace; font-size:11px; letter-spacing:0.42em;
+    text-transform:uppercase; color:var(--muted); margin-bottom:12px; padding-left:3px;
+  }
+  .brand h1{
+    font-weight:300; font-size:46px; letter-spacing:0.16em; color:var(--ink);
+    text-shadow:0 2px 40px rgba(95,184,255,0.25);
+  }
+  .brand h1 b{ font-weight:600; }
+
+  .tools{ display:flex; gap:10px; }
+  .tool{
+    pointer-events:auto;
+    width:44px; height:44px; display:grid; place-items:center;
+    background:var(--panel); border:1px solid var(--line); border-radius:13px;
+    color:var(--muted); cursor:pointer; backdrop-filter:blur(12px);
+    transition:.22s ease;
+  }
+  .tool:hover{ color:var(--ink); border-color:rgba(150,180,230,0.4); transform:translateY(-1px); }
+  .tool.active{ color:#04101f; background:var(--accent); border-color:var(--accent); }
+  .tool svg{ width:19px; height:19px; }
+
+  /* ---- bottom hint ---- */
+  .hint{
+    bottom:26px; left:50%; transform:translateX(-50%);
+    display:flex; gap:24px; align-items:center;
+    font-family:"IBM Plex Mono", monospace; font-size:11.5px; letter-spacing:0.08em;
+    color:var(--muted); background:var(--panel); border:1px solid var(--line);
+    padding:11px 20px; border-radius:100px; backdrop-filter:blur(12px);
+  }
+  .hint span{ display:flex; gap:8px; align-items:center; white-space:nowrap; }
+  .hint .k{ color:var(--ink); }
+  .hint .dot{ width:4px; height:4px; border-radius:50%; background:var(--line); }
+
+  /* ---- info card ---- */
+  .card{
+    position:fixed; z-index:6;
+    left:36px; bottom:30px; width:300px;
+    background:var(--panel); border:1px solid var(--line); border-radius:18px;
+    padding:22px 24px 20px; backdrop-filter:blur(16px);
+    box-shadow:0 30px 80px rgba(0,0,0,0.5);
+    transform:translateY(18px); opacity:0; transition:.4s cubic-bezier(.2,.8,.2,1);
+    pointer-events:none;
+  }
+  .card.show{ transform:translateY(0); opacity:1; pointer-events:auto; }
+  .card .eyebrow{
+    font-family:"IBM Plex Mono", monospace; font-size:10.5px; letter-spacing:0.34em;
+    text-transform:uppercase; color:var(--accent); margin-bottom:10px;
+  }
+  .card h2{ font-weight:500; font-size:25px; letter-spacing:0.01em; margin-bottom:16px; text-wrap:balance; }
+  .card .rows{ display:grid; gap:9px; }
+  .card .row{ display:flex; justify-content:space-between; align-items:center; font-size:13px; }
+  .card .row .lbl{ color:var(--muted); font-family:"IBM Plex Mono", monospace; font-size:11px; letter-spacing:0.05em; }
+  .card .row .val{ color:var(--ink); font-family:"IBM Plex Mono", monospace; }
+  .card .hr{ height:1px; background:var(--line); margin:15px 0; }
+  .card .foot{ font-size:11.5px; color:var(--muted); letter-spacing:0.02em; line-height:1.5; }
+
+  /* ---- floating marker label ---- */
+  #pinLabel{
+    position:fixed; z-index:4; pointer-events:none;
+    transform:translate(-50%,-150%); transition:opacity .25s ease;
+    font-family:"IBM Plex Mono", monospace; font-size:12px; letter-spacing:0.04em;
+    color:var(--ink); white-space:nowrap; opacity:0;
+  }
+  #pinLabel .tag{
+    background:rgba(8,14,28,0.82); border:1px solid rgba(95,184,255,0.45);
+    padding:5px 11px; border-radius:8px; backdrop-filter:blur(8px);
+    box-shadow:0 6px 24px rgba(0,0,0,0.45);
+  }
+  #pinLabel::after{
+    content:""; position:absolute; left:50%; top:100%; transform:translateX(-50%);
+    width:1px; height:14px; background:linear-gradient(rgba(95,184,255,0.7),transparent);
+  }
+
+  /* ---- loader ---- */
+  #loader{
+    position:fixed; inset:0; z-index:20; display:grid; place-items:center;
+    background:#03060f; transition:opacity .8s ease; 
+  }
+  #loader.hide{ opacity:0; pointer-events:none; }
+  .loadbox{ text-align:center; }
+  .spinner{
+    width:46px; height:46px; margin:0 auto 22px; border-radius:50%;
+    border:2px solid rgba(150,180,230,0.18); border-top-color:var(--accent);
+    animation:spin 0.9s linear infinite;
+  }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
+  .loadbox .lt{ font-family:"IBM Plex Mono", monospace; font-size:12px; letter-spacing:0.3em; text-transform:uppercase; color:var(--muted); }
+  .loadbox .lp{ font-size:11px; color:rgba(142,162,196,0.55); margin-top:8px; font-family:"IBM Plex Mono", monospace; }
+
+  @media (max-width:720px){
+    .brand h1{ font-size:32px; }
+    .topbar{ padding:20px; }
+    .card{ left:16px; right:16px; width:auto; bottom:84px; }
+    .hint{ font-size:10px; gap:14px; padding:9px 14px; bottom:18px; }
+    .hint .lbl-zoom{ display:none; }
+  }
+</style>
+</head>
+<body>
+  <canvas id="scene"></canvas>
+
+  <!-- Floating marker label -->
+  <div id="pinLabel"><div class="tag"></div></div>
+
+  <!-- HUD -->
+  <div class="hud topbar">
+    <div class="brand">
+      <div class="kicker">İnteraktif · Gerçek Zamanlı</div>
+      <h1>DÜNYA <b>3D</b></h1>
+    </div>
+    <div class="tools">
+      <button class="tool active" id="btnRotate" title="Otomatik dönüş">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v5h-5"/></svg>
+      </button>
+      <button class="tool" id="btnClouds" title="Bulutlar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19a4.5 4.5 0 0 0 .5-9 6 6 0 0 0-11.6-1.5A3.5 3.5 0 0 0 6.5 19z"/></svg>
+      </button>
+      <button class="tool" id="btnReset" title="Görünümü sıfırla">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9 9 0 0 0-6.4 2.6L3 8"/><path d="M3 4v4h4"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- Info card -->
+  <div class="card" id="card">
+    <div class="eyebrow" id="cardEyebrow">Konum Seçildi</div>
+    <h2 id="cardName">—</h2>
+    <div class="rows">
+      <div class="row"><span class="lbl">ENLEM</span><span class="val" id="cardLat">—</span></div>
+      <div class="row"><span class="lbl">BOYLAM</span><span class="val" id="cardLon">—</span></div>
+      <div class="row"><span class="lbl">YEREL ZAMAN</span><span class="val" id="cardTime">—</span></div>
+    </div>
+    <div class="hr"></div>
+    <div class="foot" id="cardFoot">Küre üzerinde herhangi bir kara parçasına tıklayın.</div>
+  </div>
+
+  <!-- Bottom hint -->
+  <div class="hud hint">
+    <span><span class="k">Sürükle</span> döndür</span>
+    <span class="dot"></span>
+    <span class="lbl-zoom"><span class="k">Kaydır</span> yakınlaştır</span>
+    <span class="dot lbl-zoom"></span>
+    <span><span class="k">Tıkla</span> ülke seç</span>
+  </div>
+
+  <!-- Loader -->
+  <div id="loader">
+    <div class="loadbox">
+      <div class="spinner"></div>
+      <div class="lt">Dünya Yükleniyor</div>
+      <div class="lp" id="loadPct">dokular hazırlanıyor…</div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+  <script src="countries.js"></script>
+  <script src="globe.js"></script>
+</body>
+</html>
